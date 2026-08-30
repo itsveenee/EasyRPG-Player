@@ -96,6 +96,23 @@ private:
 	};
 
 	std::vector<DirectoryStack> stack;
+
+#ifdef __PS2__
+	/* EasyRPG-PS2 runtime v1 hotplug state */
+	void UpdatePs2Storage();
+	unsigned ps2_media_poll_counter = 0;
+	bool ps2_mass_present = true;
+#endif
+
+#ifdef __PS2__
+	/* EasyRPG-PS2 runtime v2 exit confirmation */
+	void OpenExitConfirmation();
+	void CloseExitConfirmation();
+	void UpdateExitConfirmation();
+	std::unique_ptr<Window_Help> exit_prompt_window;
+	std::unique_ptr<Window_Command_Horizontal> exit_confirm_window;
+	bool exit_confirm_active = false;
+#endif
 };
 
 #endif

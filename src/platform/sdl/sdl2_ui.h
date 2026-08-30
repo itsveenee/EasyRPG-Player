@@ -25,6 +25,7 @@
 #include "system.h"
 
 #include <array>
+#include <vector>
 #include <SDL.h>
 
 extern "C" {
@@ -149,6 +150,11 @@ private:
 	} window = {};
 
 	uint32_t texture_format = SDL_PIXELFORMAT_UNKNOWN;
+
+#ifdef __PS2__
+	/* EasyRPG-PS2 runtime v1: temporary 320x240 gamma-corrected upload buffer. */
+	std::vector<unsigned char> ps2_gamma_buffer;
+#endif
 
 #ifdef SUPPORT_AUDIO
 	std::unique_ptr<AudioInterface> audio_;

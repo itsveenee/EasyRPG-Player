@@ -41,7 +41,12 @@ namespace {
 
 void sdl_audio_callback(void* userdata, uint8_t* stream, int length) {
 	// no mutex locking required, SDL does this before calling
-
+#ifdef __PS2__
+	/* EasyRPG-PS2 runtime v1: clear callback buffer first.
+	 * GenericAudio should fill it completely, but silence-by-default prevents
+	 * stale PCM from surviving any short/error path in the console backend. */
+	SDL_memset(stream, 0, length);
+#endif
 	static_cast<GenericAudio*>(userdata)->Decode(stream, length);
 }
 
@@ -95,7 +100,12 @@ Sdl2Audio::Sdl2Audio(const Game_ConfigAudio& cfg) :
 	want.freq = frequency;
 	want.format = AUDIO_S16SYS;
 	want.channels = 2;
+#ifdef __PS2__
+	/* PS2 backend itself is fixed at 512. Ask for the same fragment size. */
+	want.samples = 512;
+#else
 	want.samples = 2048;
+#endif
 	want.callback = sdl_audio_callback;
 	want.userdata = this;
 

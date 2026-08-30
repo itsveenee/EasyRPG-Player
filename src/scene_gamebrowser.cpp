@@ -19,6 +19,9 @@
 #include "scene_gamebrowser.h"
 
 #include <memory>
+#ifdef __PS2__
+#include <sys/stat.h>
+#endif
 #include "options.h"
 #include "scene_settings.h"
 #include "audio_midi.h"
@@ -32,12 +35,25 @@
 #include "audio.h"
 #include "output.h"
 
+#ifdef __PS2__
+/* EasyRPG-PS2 runtime v1: mass0 hotplug.
+ * Use direct stat() so this probe is independent of EasyRPG's DirectoryTree cache. */
+static bool Ps2Mass0Present() {
+	struct stat st = {};
+	return stat("mass0:/", &st) == 0;
+}
+#endif
+
 Scene_GameBrowser::Scene_GameBrowser() {
 	type = Scene::GameBrowser;
 }
 
 void Scene_GameBrowser::Start() {
 	initial_debug_flag = Player::debug_flag;
+#ifdef __PS2__
+	ps2_mass_present = Ps2Mass0Present();
+	ps2_media_poll_counter = 0;
+#endif
 	Main_Data::game_system = std::make_unique<Game_System>();
 	Main_Data::game_system->SetSystemGraphic(CACHE_DEFAULT_BITMAP, lcf::rpg::System::Stretch_stretch, lcf::rpg::System::Font_gothic);
 	stack.push_back({ FileFinder::Game(), 0 });
@@ -71,6 +87,14 @@ void Scene_GameBrowser::Continue(SceneType /* prev_scene */) {
 }
 
 void Scene_GameBrowser::vUpdate() {
+#ifdef __PS2__
+	UpdatePs2Storage();
+	if (exit_confirm_active) {
+		exit_confirm_window->Update();
+		UpdateExitConfirmation();
+		return;
+	}
+#endif
 	if (game_loading) {
 		BootGame();
 		return;
@@ -86,6 +110,54 @@ void Scene_GameBrowser::vUpdate() {
 		UpdateGameListSelection();
 	}
 }
+
+#ifdef __PS2__
+void Scene_GameBrowser::UpdatePs2Storage() {
+	/* Poll twice per second at ~60 fps. Do no filesystem I/O every frame. */
+	if (++ps2_media_poll_counter < 30) {
+		return;
+	}
+	ps2_media_poll_counter = 0;
+
+	const bool present = Ps2Mass0Present();
+	if (present == ps2_mass_present) {
+		return;
+	}
+	ps2_mass_present = present;
+
+	if (stack.empty() || !gamelist_window || !command_window) {
+		return;
+	}
+
+	/* EasyRPG-PS2 runtime v1: refresh all DirectoryTree caches after mass0 transition.
+	 * This also clears the "known missing" cache, which otherwise survives removal. */
+	stack.front().filesystem.GetOwner().ClearCache("");
+
+	bool refreshed = gamelist_window->Refresh(
+		stack.back().filesystem, stack.size() > 1);
+
+	/* If the user was inside a directory that no longer exists on the new
+	 * device, recover to the browser root instead of leaving a stale view. */
+	if (present && !refreshed && stack.size() > 1) {
+		stack.resize(1);
+		stack.front().filesystem.GetOwner().ClearCache("");
+		refreshed = gamelist_window->Refresh(stack.front().filesystem, false);
+	}
+
+	if (!present || !refreshed || !gamelist_window->HasValidEntry()) {
+		command_window->DisableItem(GameList);
+		command_window->SetActive(true);
+		command_window->SetIndex(GameList);
+		gamelist_window->SetActive(false);
+		gamelist_window->SetIndex(-1);
+	} else {
+		command_window->EnableItem(GameList);
+	}
+
+	Output::Debug("PS2: mass0 {} - browser filesystem cache refreshed",
+		present ? "inserted" : "removed");
+}
+#endif
 
 void Scene_GameBrowser::CreateWindows() {
 	// Create Options Window
@@ -114,10 +186,69 @@ void Scene_GameBrowser::CreateWindows() {
 	load_window->SetText("Loading...");
 	load_window->SetVisible(false);
 
+#ifdef __PS2__
+	exit_prompt_window = std::make_unique<Window_Help>(
+		Player::screen_width / 4, Player::screen_height / 2 - 32,
+		Player::screen_width / 2, 32);
+	exit_prompt_window->SetText("Exit EasyRPG Player?");
+	exit_prompt_window->SetVisible(false);
+
+	exit_confirm_window = std::make_unique<Window_Command_Horizontal>(
+		std::vector<std::string>{ "No", "Yes" }, Player::screen_width / 2);
+	exit_confirm_window->SetX(Player::screen_width / 4);
+	exit_confirm_window->SetY(Player::screen_height / 2);
+	exit_confirm_window->SetIndex(0);
+	exit_confirm_window->SetActive(false);
+	exit_confirm_window->SetVisible(false);
+#endif
+
 	about_window = std::make_unique<Window_About>(0, 64, Player::screen_width, Player::screen_height - 64);
 	about_window->Refresh();
 	about_window->SetVisible(false);
 }
+
+#ifdef __PS2__
+void Scene_GameBrowser::OpenExitConfirmation() {
+	if (exit_confirm_active) {
+		return;
+	}
+	exit_confirm_active = true;
+	command_window->SetActive(false);
+	gamelist_window->SetActive(false);
+	exit_prompt_window->SetVisible(true);
+	exit_confirm_window->SetVisible(true);
+	exit_confirm_window->SetActive(true);
+	exit_confirm_window->SetIndex(0); // No is the safe default
+}
+
+void Scene_GameBrowser::CloseExitConfirmation() {
+	exit_confirm_active = false;
+	exit_confirm_window->SetActive(false);
+	exit_confirm_window->SetVisible(false);
+	exit_prompt_window->SetVisible(false);
+	command_window->SetActive(true);
+	command_window->SetIndex(Quit);
+}
+
+void Scene_GameBrowser::UpdateExitConfirmation() {
+	if (Input::IsTriggered(Input::CANCEL)) {
+		CloseExitConfirmation();
+		return;
+	}
+	if (!Input::IsTriggered(Input::DECISION)) {
+		return;
+	}
+
+	if (exit_confirm_window->GetIndex() == 1) {
+		exit_confirm_window->SetActive(false);
+		exit_confirm_active = false;
+		Scene::Pop();
+		return;
+	}
+
+	CloseExitConfirmation();
+}
+#endif
 
 void Scene_GameBrowser::UpdateCommand() {
 	int menu_index = command_window->GetIndex();
@@ -136,8 +267,12 @@ void Scene_GameBrowser::UpdateCommand() {
 	}
 
 	if (Input::IsTriggered(Input::CANCEL)) {
+#ifdef __PS2__
+		OpenExitConfirmation();
+#else
 		Main_Data::game_system->SePlay(Main_Data::game_system->GetSystemSE(Main_Data::game_system->SFX_Cancel));
 		Scene::Pop();
+#endif
 	} else if (Input::IsTriggered(Input::DECISION)) {
 
 		switch (menu_index) {
@@ -155,8 +290,15 @@ void Scene_GameBrowser::UpdateCommand() {
 			case Options:
 				Scene::Push(std::make_shared<Scene_Settings>());
 				break;
-			default:
+			case Quit:
+#ifdef __PS2__
+				OpenExitConfirmation();
+#else
 				Scene::Pop();
+#endif
+				break;
+			default:
+				break;
 		}
 	}
 }

@@ -38,13 +38,25 @@ bool Window_GameList::Refresh(FilesystemView filesystem_base, bool show_dotdot) 
 
 	this->show_dotdot = show_dotdot;
 
+/* EasyRPG-PS2 runtime v1: tolerate media removal.
+ * Never dereference a cached directory pointer when the backing device vanished. */
+	auto* files_ptr = base_fs.ListDirectory();
+	if (!files_ptr) {
+		item_max = 1;
+		SetContents(Bitmap::Create(width - 16, height - 16));
+		contents->Clear();
+		contents->TextDraw(0, 0, Font::ColorKnockout,
+			"Storage unavailable. Reinsert USB device.");
+		return false;
+	}
+
 #ifndef USE_CUSTOM_FILEBUF
 	// Calling "Create" while iterating over the directory list appears to corrupt
 	// the file entries probably because of a reallocation due to caching new entries.
 	// Create a copy of the entries instead to workaround this issue.
-	DirectoryTree::DirectoryListType files = *base_fs.ListDirectory();
+	DirectoryTree::DirectoryListType files = *files_ptr;
 #else
-	DirectoryTree::DirectoryListType* files = base_fs.ListDirectory();
+	DirectoryTree::DirectoryListType* files = files_ptr;
 #endif
 
 	// Find valid game diectories

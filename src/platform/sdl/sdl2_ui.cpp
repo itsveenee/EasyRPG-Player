@@ -59,6 +59,30 @@ AudioInterface& Sdl2Ui::GetAudio() {
 }
 #endif
 
+#ifdef __PS2__
+/* EasyRPG-PS2 runtime v2 game-only gamma 1.15.
+ * The PS2 renderer exposes SDL_PIXELFORMAT_RGBA32 in memory order R,G,B,A.
+ * Keep 0 and 255 fixed and darken mid-tones only; no spatial filtering. */
+static const Uint8 kPs2CrtGammaLut[256] = {
+	0, 0, 1, 2, 2, 3, 3, 4, 5, 5, 6, 7, 8, 8, 9, 10,
+	11, 11, 12, 13, 14, 14, 15, 16, 17, 18, 18, 19, 20, 21, 22, 23,
+	23, 24, 25, 26, 27, 28, 29, 29, 30, 31, 32, 33, 34, 35, 36, 36,
+	37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 46, 47, 48, 49, 50, 51,
+	52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 61, 62, 63, 64, 65, 66,
+	67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82,
+	83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98,
+	99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114,
+	115, 116, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131,
+	132, 133, 134, 135, 136, 137, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148,
+	149, 150, 151, 152, 153, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165,
+	166, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 180, 181, 182, 183,
+	184, 185, 186, 187, 188, 190, 191, 192, 193, 194, 195, 196, 197, 198, 200, 201,
+	202, 203, 204, 205, 206, 207, 208, 210, 211, 212, 213, 214, 215, 216, 217, 219,
+	220, 221, 222, 223, 224, 225, 226, 228, 229, 230, 231, 232, 233, 234, 236, 237,
+	238, 239, 240, 241, 242, 244, 245, 246, 247, 248, 249, 250, 252, 253, 254, 255
+};
+#endif
+
 static uint32_t GetDefaultFormat() {
 #ifdef WORDS_BIGENDIAN
 	return SDL_PIXELFORMAT_ABGR32;
@@ -632,7 +656,47 @@ void Sdl2Ui::SetScreenScale(int scale) {
 }
 
 void Sdl2Ui::UpdateDisplay() {
-#ifdef __WIIU__
+#ifdef __PS2__
+	/* Gamma correction is color-only. Geometry stays a 320x240 nearest-neighbor
+	 * texture with no resize and no bilinear filtering. */
+	const int src_pitch = main_surface->pitch();
+	const int src_width = main_surface->width();
+	const int src_height = main_surface->height();
+	const auto* src_pixels = static_cast<const Uint8*>(main_surface->pixels());
+
+	/* EasyRPG-PS2 runtime v2: apply CRT gamma only after a project is loaded.
+	 * Player::game_title is filled by CreateGameObjects() and cleared when
+	 * returning to Scene_GameBrowser, so browser/settings/about stay untouched. */
+	const bool ps2_apply_game_gamma = !Player::game_title.empty();
+
+	if (ps2_apply_game_gamma &&
+		texture_format == SDL_PIXELFORMAT_RGBA32 &&
+		SDL_BYTESPERPIXEL(texture_format) == 4 &&
+		src_pitch >= src_width * 4) {
+		const size_t frame_bytes = static_cast<size_t>(src_pitch) *
+			static_cast<size_t>(src_height);
+		ps2_gamma_buffer.resize(frame_bytes);
+
+		for (int y = 0; y < src_height; ++y) {
+			const Uint8* src = src_pixels + y * src_pitch;
+			Uint8* dst = ps2_gamma_buffer.data() + y * src_pitch;
+			SDL_memcpy(dst, src, src_pitch);
+			for (int x = 0; x < src_width; ++x) {
+				const int o = x * 4;
+				dst[o + 0] = kPs2CrtGammaLut[src[o + 0]];
+				dst[o + 1] = kPs2CrtGammaLut[src[o + 1]];
+				dst[o + 2] = kPs2CrtGammaLut[src[o + 2]];
+				/* alpha byte [3] is preserved */
+			}
+		}
+		SDL_UpdateTexture(sdl_texture_game, nullptr,
+			ps2_gamma_buffer.data(), src_pitch);
+	} else {
+		/* Defensive fallback if the backend format ever changes. */
+		SDL_UpdateTexture(sdl_texture_game, nullptr,
+			main_surface->pixels(), main_surface->pitch());
+	}
+#elif defined(__WIIU__)
 	if (vcfg.scaling_mode.Get() == ConfigEnum::ScalingMode::Bilinear && window.scale > 0.f) {
 		// Workaround WiiU bug: Bilinear uses a render target and for these the format is not converted
 		void* target_pixels;

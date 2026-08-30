@@ -85,7 +85,7 @@ export GSKIT="${GSKIT:-$PS2DEV/gsKit}"
 # installed PS2SDK prefix itself to contain the SDK source tree.
 export PATH="$PS2DEV/bin:$PS2DEV/ee/bin:$PS2DEV/iop/bin:$PS2DEV/dvp/bin:$PS2SDK/bin:$PATH"
 PORTS="$PS2SDK/ports"
-JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)"
+JOBS="${JOBS:-8}"
 
 if [[ -f "$PS2DEV/share/ps2dev.cmake" ]]; then
     TOOLCHAIN="$PS2DEV/share/ps2dev.cmake"
@@ -550,6 +550,20 @@ CUSTOM_IRX="$DEPS/bdmfs_fatfs_exfat_utf8.irx"
 [[ -f "$SOURCE_IRX" ]] || { echo "ERRO: bdmfs_fatfs.irx privado não foi gerado: $SOURCE_IRX" >&2; exit 2; }
 cp "$SOURCE_IRX" "$CUSTOM_IRX"
 
+# EasyRPG-PS2 runtime v2: build private underrun-safe audsrv.
+AUDSRV_C="$PS2SDK_SRC/iop/sound/audsrv/src/audsrv.c"
+[[ -f "$AUDSRV_C" ]] || { echo "ERRO: audsrv.c privado não encontrado: $AUDSRV_C" >&2; exit 2; }
+python3 "$ROOT/builds/ps2/patch_audsrv_runtime_v2.py" "$AUDSRV_C"
+make -C "$PS2SDK_SRC/iop/sound/audsrv" PS2SDKSRC="$PS2SDK_SRC" clean
+make -C "$PS2SDK_SRC/iop/sound/audsrv" PS2SDKSRC="$PS2SDK_SRC" -j"$JOBS"
+SOURCE_AUDSRV_IRX="$(find "$PS2SDK_SRC/iop/sound/audsrv" -maxdepth 3 -type f -name audsrv.irx -print -quit)"
+CUSTOM_AUDSRV_IRX="$DEPS/audsrv_underrun_safe.irx"
+[[ -n "$SOURCE_AUDSRV_IRX" && -f "$SOURCE_AUDSRV_IRX" ]] || {
+    echo "ERRO: audsrv.irx privado corrigido não foi gerado." >&2
+    exit 2
+}
+cp "$SOURCE_AUDSRV_IRX" "$CUSTOM_AUDSRV_IRX"
+
 P2D="$DEPS/ps2_drivers"
 if [[ ! -d "$P2D/.git" ]]; then
     git clone https://github.com/fjtrujy/ps2_drivers.git "$P2D"
@@ -574,6 +588,8 @@ old = 'function(add_irx_source irx_name output_var)\n    set(irx_path "${PS2SDK}
 new = ('function(add_irx_source irx_name output_var)\n'
        '    if(irx_name STREQUAL "bdmfs_fatfs" AND DEFINED EASYRPG_BDMFS_FATFS_IRX)\n'
        '        set(irx_path "${EASYRPG_BDMFS_FATFS_IRX}")\n'
+       '    elseif(irx_name STREQUAL "audsrv" AND DEFINED EASYRPG_AUDSRV_IRX)\n'
+       '        set(irx_path "${EASYRPG_AUDSRV_IRX}")\n'
        '    else()\n'
        '        set(irx_path "${PS2SDK}/iop/irx/${irx_name}.irx")\n'
        '    endif()\n')
@@ -586,7 +602,8 @@ rm -rf "$P2D/build-ps2"
 cmake -S "$P2D" -B "$P2D/build-ps2" \
     -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN" \
     -DCMAKE_BUILD_TYPE=Release -DBUILD_SAMPLES=OFF \
-    -DEASYRPG_BDMFS_FATFS_IRX="$CUSTOM_IRX"
+    -DEASYRPG_BDMFS_FATFS_IRX="$CUSTOM_IRX" \
+    -DEASYRPG_AUDSRV_IRX="$CUSTOM_AUDSRV_IRX"
 cmake --build "$P2D/build-ps2" -j"$JOBS"
 [[ -f "$P2D/build-ps2/libps2_drivers.a" ]] || { echo "ERRO: libps2_drivers.a não foi gerada." >&2; exit 2; }
 cp "$P2D/build-ps2/libps2_drivers.a" "$PREFIX/lib/libps2_drivers.a"
@@ -649,6 +666,15 @@ replace_once(
     "    waitUntilDeviceIsReady(mass_root);",
     "wait specifically for mass0")
 replace_once(
+    "src/audio/ps2/SDL_ps2audio.c",
+    "    audsrv_play_audio((char *)mixbuf, this->spec.size);\n\n"
+    "    this->hidden->next_buffer = (this->hidden->next_buffer + 1) % NUM_BUFFERS;",
+    "    audsrv_play_audio((char *)mixbuf, this->spec.size);\n\n"
+    "    this->hidden->next_buffer = (this->hidden->next_buffer + 1) % NUM_BUFFERS;\n"
+    "    /* EasyRPG-PS2 runtime v1: pre-clear the next DMA buffer. */\n"
+    "    SDL_memset(this->hidden->mixbufs[this->hidden->next_buffer], 0, this->spec.size);",
+    "pre-clear next PS2 audio buffer")
+replace_once(
     "src/video/ps2/SDL_ps2video.c",
     "    current_mode.w = 640;\n    current_mode.h = 480;",
     "    current_mode.w = 320;\n    current_mode.h = 240;",
@@ -674,6 +700,23 @@ replace_once(
     "native 240p GS mode")
 replace_once(
     "src/render/ps2/SDL_render_ps2.c",
+    "    gsKit_init_screen(gsGlobal);\n\n"
+    "    gsKit_TexManager_init(gsGlobal);",
+    "    gsKit_init_screen(gsGlobal);\n\n"
+    "    /* EasyRPG-PS2 runtime v1: CRT-safe 320-column timing. */\n"
+    "    {\n"
+    "        const int old_dw = gsGlobal->DW;\n"
+    "        const int crt_magh = 7; /* 8 VCK per each of the 320 columns */\n"
+    "        const int crt_dw = (crt_magh + 1) * gsGlobal->Width;\n"
+    "        gsGlobal->StartX += (old_dw - crt_dw) / 2;\n"
+    "        gsGlobal->MagH = crt_magh;\n"
+    "        gsGlobal->DW = crt_dw;\n"
+    "        gsKit_set_display_offset(gsGlobal, 0, 0);\n"
+    "    }\n\n"
+    "    gsKit_TexManager_init(gsGlobal);",
+    "CRT-safe 320-column timing")
+replace_once(
+    "src/render/ps2/SDL_render_ps2.c",
     ".flags = SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC | SDL_RENDERER_TARGETTEXTURE,",
     ".flags = SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC,",
     "do not advertise unsupported render targets")
@@ -682,6 +725,8 @@ PY
 grep -q 'gsGlobal->Interlace = GS_NONINTERLACED' "$SDL/src/render/ps2/SDL_render_ps2.c"
 grep -q 'gsGlobal->Width = 320' "$SDL/src/render/ps2/SDL_render_ps2.c"
 grep -q 'gsGlobal->Height = 240' "$SDL/src/render/ps2/SDL_render_ps2.c"
+grep -q 'CRT-safe 320-column timing' "$SDL/src/render/ps2/SDL_render_ps2.c"
+grep -q 'pre-clear the next DMA buffer' "$SDL/src/audio/ps2/SDL_ps2audio.c"
 rm -rf "$SDL/build-ps2"
 cmake -S "$SDL" -B "$SDL/build-ps2" \
     -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN" \
