@@ -1,3 +1,9 @@
 [submodule "builds/libretro/libretro-common"]
 	path = builds/libretro/libretro-common
 	url = https://github.com/libretro/libretro-common
+[submodule "lib/liblcf"]
+	path = lib/liblcf
+	url = https://github.com/itsveenee/EasyRPG-liblcf.git
+[submodule "lib/rtp"]
+	path = lib/rtp
+	url = https://github.com/itsveenee/EasyRPG-RTP.git

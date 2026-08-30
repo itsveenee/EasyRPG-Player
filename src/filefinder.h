@@ -39,10 +39,17 @@
  */
 namespace FileFinder {
 	constexpr const auto IMG_TYPES = Utils::MakeSvArray(".bmp", ".png", ".xyz");
+#if defined(__PS2__)
+	// PS2: keep the decoder set deliberately small for RAM/CPU usage.
+	// Explicit MIDI names receive a same-basename WAV fallback in OpenMusic().
+	constexpr const auto MUSIC_TYPES = Utils::MakeSvArray(".ogg", ".wav");
+	constexpr const auto SOUND_TYPES = Utils::MakeSvArray(".ogg", ".wav");
+#else
 	constexpr const auto MUSIC_TYPES = Utils::MakeSvArray(
 			".opus", ".oga", ".ogg", ".wav", ".mid", ".midi", ".mp3", ".wma");
 	constexpr const auto SOUND_TYPES = Utils::MakeSvArray(
 			".opus", ".oga", ".ogg", ".wav", ".mp3", ".wma");
+#endif
 	constexpr const auto FONTS_TYPES = Utils::MakeSvArray(".fon", ".fnt", ".bdf", ".ttf", ".ttc", ".otf", ".woff2", ".woff");
 	constexpr const auto TEXT_TYPES = Utils::MakeSvArray(".txt", ".csv", ""); // "" = Complete Filename (incl. extension) provided by the user
 

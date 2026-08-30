@@ -137,7 +137,15 @@ bool NativeFilesystem::GetDirectoryContent(std::string_view path, std::vector<Di
 		if (type == Platform::FileType::Directory) {
 			is_directory = true;
 		} else if (type == Platform::FileType::Unknown) {
-			is_directory = IsDirectory(name, true);
+			// BDM/FatFs can return DT_UNKNOWN. Here p is already the fully
+			// resolved native directory path (ToString(path)), so build the
+			// child path directly instead of feeding it through ToString again.
+			std::string child_path = p;
+			if (!child_path.empty() && child_path.back() != '/') {
+				child_path += '/';
+			}
+			child_path += name;
+			is_directory = Platform::File(child_path).IsDirectory(true);
 		}
 
 		entries.emplace_back(

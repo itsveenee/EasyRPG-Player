@@ -109,6 +109,10 @@ private:
 	void ProcessControllerRemoved(SDL_Event &evnt);
 	void ProcessControllerButtonEvent(SDL_Event &evnt);
 	void ProcessControllerAxisEvent(SDL_Event &evnt);
+#ifdef __PS2__
+	void ProcessPs2JoystickButtonEvent(SDL_Event &evnt);
+	void ProcessPs2JoystickAxisEvent(SDL_Event &evnt);
+#endif
 	void ProcessFingerEvent(SDL_Event & evnt);
 
 	/** @} */

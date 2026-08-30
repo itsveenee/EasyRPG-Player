@@ -148,6 +148,21 @@ Game_Config Game_Config::Create(CmdlineParser& cp) {
 	cp.Rewind();
 	cfg.LoadFromArgs(cp);
 
+#ifdef __PS2__
+	// Hardware invariants of this port. Apply them after INI/CLI parsing so an
+	// old desktop config cannot accidentally request bilinear, widescreen or
+	// a non-vsynced/interlaced presentation on PS2.
+	cfg.video.vsync.Set(true);
+	cfg.video.fps_limit.Set(DEFAULT_FPS);
+	cfg.video.fullscreen.Set(true);
+	cfg.video.window_zoom.Set(1);
+	cfg.video.scaling_mode.Set(ConfigEnum::ScalingMode::Nearest);
+	cfg.video.stretch.Set(false);
+	cfg.video.game_resolution.Set(ConfigEnum::GameResolution::Original);
+	cfg.video.screen_scale.Set(100);
+	cfg.video.pause_when_focus_lost.Set(false);
+#endif
+
 	return cfg;
 }
 
@@ -166,6 +181,9 @@ FilesystemView Game_Config::GetGlobalConfigFilesystem() {
 		path = "sdmc:/data/easyrpg-player";
 #elif defined(__vita__)
 		path = "ux0:/data/easyrpg-player";
+#elif defined(__PS2__)
+		// EasyRPG-PS2 keeps persistent settings on the same USB root.
+		path = "mass0:/EasyRPG/config";
 #elif defined(__PS4__)
 		path = "/data/easyrpg-player/";
 #elif defined(USE_LIBRETRO)

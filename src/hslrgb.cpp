@@ -28,8 +28,14 @@ struct ColorHSL {
 /**
  ** RGB to HSL.
  */
+#if defined(__PS2__)
+// EasyRPG-PS2 R5900 ColorHSL ABI workaround:
+// avoid returning this 24-byte double aggregate through the R5900 ABI.
+static void RGB2HSL_PS2(const Color& col, ColorHSL& ncol) {
+#else
 ColorHSL RGB2HSL(Color col) {
 	ColorHSL ncol;
+#endif
 	double vmin, vmax, delta;
 	double r, g, b;
 	r = col.red / 255.0;
@@ -60,7 +66,9 @@ ColorHSL RGB2HSL(Color col) {
 			ncol.h = (2.0 / 3) + dg - dr;
 		}
 	}
+#if !defined(__PS2__)
 	return ncol;
+#endif
 }
 
 /**
@@ -78,8 +86,17 @@ double Hue_2_RGB(double v1, double v2, double vH) {
 /**
  * HSL to RGB.
  */
+#if defined(__PS2__)
+static void HSL2RGB_PS2(const ColorHSL& col, Color& ncol) {
+	// Avoid passing ColorHSL by value and avoid aggregate return lowering.
+	ncol.red = 0;
+	ncol.green = 0;
+	ncol.blue = 0;
+	ncol.alpha = 0;
+#else
 Color HSL2RGB(ColorHSL col) {
 	Color ncol(0, 0, 0, 0);
+#endif
 	if (col.s == 0) {
 		ncol.red = (unsigned char)(col.l * 255);
 		ncol.green = (unsigned char)(col.l * 255);
@@ -96,13 +113,19 @@ Color HSL2RGB(ColorHSL col) {
 		ncol.green = (unsigned char)(255 * Hue_2_RGB(v1, v2, col.h));
 		ncol.blue = (unsigned char)(255 * Hue_2_RGB(v1, v2, col.h - (1.0 / 3)));
 	}
+#if !defined(__PS2__)
 	return ncol;
+#endif
 }
 
 Color RGBAdjustHSL(Color col, double h, double s, double l) {
 	ColorHSL hsl;
 	Color rgb = col;
+#if defined(__PS2__)
+	RGB2HSL_PS2(rgb, hsl);
+#else
 	hsl = RGB2HSL(rgb);
+#endif
 	hsl.h = hsl.h + h / 360.0;
 	while (hsl.h > 1) hsl.h -= 1;
 	while (hsl.h < 0) hsl.h += 1;
@@ -112,7 +135,11 @@ Color RGBAdjustHSL(Color col, double h, double s, double l) {
 	hsl.l = hsl.l * l;
 	if (hsl.l > 1) hsl.l = 1;
 	if (hsl.l < 0) hsl.l = 0;
+#if defined(__PS2__)
+	HSL2RGB_PS2(hsl, rgb);
+#else
 	rgb = HSL2RGB(hsl);
+#endif
 	rgb.alpha = col.alpha;
 	return rgb;
 }

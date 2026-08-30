@@ -163,6 +163,10 @@ static Input::Keys::InputKey SdlJKey2InputKey(int button_index);
 
 Sdl2Ui::Sdl2Ui(long width, long height, const Game_Config& cfg) : BaseUi(cfg)
 {
+#ifdef __PS2__
+	// EasyRPG-PS2: fixed native 320x240p. Keep every source pixel intact.
+	SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
+#endif
 	// Set some SDL environment variables before starting. These are platform
 	// dependent, so every port needs to set them manually
 #ifdef __LINUX__
@@ -187,7 +191,13 @@ Sdl2Ui::Sdl2Ui(long width, long height, const Game_Config& cfg) : BaseUi(cfg)
 	SetTitle(GAME_TITLE);
 
 #if (defined(USE_JOYSTICK) && defined(SUPPORT_JOYSTICK)) || (defined(USE_JOYSTICK_AXIS) && defined(SUPPORT_JOYSTICK_AXIS))
+#ifdef __PS2__
+	// EasyRPG-PS2: SDL's PS2 backend is a raw joystick and provides no
+	// SDL_GameController mapping. Request JOYSTICK events explicitly.
+	if (SDL_InitSubSystem(SDL_INIT_JOYSTICK) < 0) {
+#else
 	if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) < 0) {
+#endif
 		Output::Warning("Couldn't initialize joystick. {}", SDL_GetError());
 	}
 
@@ -235,6 +245,15 @@ Sdl2Ui::~Sdl2Ui() {
 }
 
 bool Sdl2Ui::vChangeDisplaySurfaceResolution(int new_width, int new_height) {
+#ifdef __PS2__
+	// Keep the GS framebuffer and the EasyRPG surface in a strict 1:1 relation.
+	// Do not silently lie about custom-resolution Maniac games: reject them until
+	// a dedicated integer/downscale policy is implemented for PS2.
+	if (new_width != 320 || new_height != 240) {
+		Output::Warning("PS2: custom resolution {}x{} is unsupported; native mode is 320x240", new_width, new_height);
+		return false;
+	}
+#endif
 	SDL_Texture* new_sdl_texture_game = SDL_CreateTexture(sdl_renderer,
 		texture_format,
 		SDL_TEXTUREACCESS_STREAMING,
@@ -272,6 +291,14 @@ bool Sdl2Ui::vChangeDisplaySurfaceResolution(int new_width, int new_height) {
 }
 
 void Sdl2Ui::RequestVideoMode(int width, int height, int zoom, bool fullscreen, bool vsync) {
+#ifdef __PS2__
+	// No 480i mode on this port: output is always NTSC 320x240p at 1:1.
+	width = 320;
+	height = 240;
+	zoom = 1;
+	fullscreen = false; // the PS2 SDL backend is inherently fullscreen
+	vsync = true;       // synchronize to the 240p field rate and avoid tearing
+#endif
 	BeginDisplayModeChange();
 
 	// SDL2 documentation says that resolution dependent code should not be used
@@ -317,7 +344,7 @@ void Sdl2Ui::EndDisplayModeChange() {
 			}
 
 			current_display_mode.effective = true;
-#if defined(__EMSCRIPTEN__) || defined(__PS4__)
+#if defined(__EMSCRIPTEN__) || defined(__PS4__) || defined(__PS2__)
 			SetIsFullscreen(true);
 #else
 			SetIsFullscreen((current_display_mode.flags & SDL_WINDOW_FULLSCREEN_DESKTOP) == SDL_WINDOW_FULLSCREEN_DESKTOP);
@@ -438,12 +465,17 @@ bool Sdl2Ui::RefreshDisplayMode() {
 			Output::Debug("SDL_CreateTexture failed : {}", SDL_GetError());
 			return false;
 		}
+#ifdef __PS2__
+#if SDL_VERSION_ATLEAST(2, 0, 12)
+		SDL_SetTextureScaleMode(sdl_texture_game, SDL_ScaleModeNearest);
+#endif
+#endif
 
 		renderer_sg.Dismiss();
 		window_sg.Dismiss();
 	} else {
 		// Browser handles fast resizing for emscripten, TODO: use fullscreen API
-#if !defined(__EMSCRIPTEN__) && !defined(__PS4__)
+#if !defined(__EMSCRIPTEN__) && !defined(__PS4__) && !defined(__PS2__)
 		bool is_fullscreen = (flags & SDL_WINDOW_FULLSCREEN_DESKTOP) == SDL_WINDOW_FULLSCREEN_DESKTOP;
 		if (is_fullscreen) {
 			SDL_SetWindowFullscreen(sdl_window, SDL_WINDOW_FULLSCREEN_DESKTOP);
@@ -491,6 +523,10 @@ bool Sdl2Ui::RefreshDisplayMode() {
 }
 
 void Sdl2Ui::ToggleFullscreen() {
+#ifdef __PS2__
+	// Fixed console video mode: fullscreen/windowed has no meaning on PS2.
+	return;
+#endif
 	BeginDisplayModeChange();
 	if ((current_display_mode.flags & SDL_WINDOW_FULLSCREEN_DESKTOP) == SDL_WINDOW_FULLSCREEN_DESKTOP) {
 		current_display_mode.flags &= ~SDL_WINDOW_FULLSCREEN_DESKTOP;
@@ -571,6 +607,10 @@ void Sdl2Ui::ToggleStretch() {
 }
 
 void Sdl2Ui::ToggleVsync() {
+#ifdef __PS2__
+	// Native 240p output stays synchronized to vblank; do not permit tearing.
+	return;
+#endif
 #if SDL_VERSION_ATLEAST(2, 0, 18)
 	// Modifying vsync requires recreating the renderer
 	vcfg.vsync.Toggle();
@@ -608,6 +648,16 @@ void Sdl2Ui::UpdateDisplay() {
 #else
 	// SDL_UpdateTexture was found to be faster than SDL_LockTexture / SDL_UnlockTexture.
 	SDL_UpdateTexture(sdl_texture_game, nullptr, main_surface->pixels(), main_surface->pitch());
+#endif
+
+#ifdef __PS2__
+	// Exact 320x240 texture -> exact 320x240 GS framebuffer. No intermediate
+	// render target, bilinear filtering, fractional viewport or uneven pixels.
+	SDL_RenderSetViewport(sdl_renderer, nullptr);
+	SDL_RenderClear(sdl_renderer);
+	SDL_RenderCopy(sdl_renderer, sdl_texture_game, nullptr, nullptr);
+	SDL_RenderPresent(sdl_renderer);
+	return;
 #endif
 
 #ifndef __PS4__
@@ -760,6 +810,16 @@ void Sdl2Ui::ProcessEvent(SDL_Event &evnt) {
 		case SDL_MOUSEBUTTONUP:
 			ProcessMouseButtonEvent(evnt);
 			return;
+
+#ifdef __PS2__
+		case SDL_JOYBUTTONDOWN:
+		case SDL_JOYBUTTONUP:
+			ProcessPs2JoystickButtonEvent(evnt);
+			return;
+		case SDL_JOYAXISMOTION:
+			ProcessPs2JoystickAxisEvent(evnt);
+			return;
+#endif
 
 		case SDL_CONTROLLERDEVICEADDED:
 			ProcessControllerAdded(evnt);
@@ -1005,6 +1065,63 @@ void Sdl2Ui::ProcessControllerAxisEvent(SDL_Event &evnt) {
 	}
 #endif
 }
+
+#ifdef __PS2__
+void Sdl2Ui::ProcessPs2JoystickButtonEvent(SDL_Event& evnt) {
+#if defined(USE_JOYSTICK) && defined(SUPPORT_JOYSTICK)
+	// SDL PS2 emits the raw libpad bit index (0..15), not SDL_CONTROLLER_BUTTON_*.
+	Input::Keys::InputKey key = Input::Keys::NONE;
+	const bool pressed = evnt.jbutton.state == SDL_PRESSED;
+	switch (evnt.jbutton.button) {
+		case 0:  key = Input::Keys::JOY_BACK; break;           // Select
+		case 1:  key = Input::Keys::JOY_LSTICK; break;         // L3
+		case 2:  key = Input::Keys::JOY_RSTICK; break;         // R3
+		case 3:  key = Input::Keys::JOY_START; break;          // Start
+		case 4:  key = Input::Keys::JOY_DPAD_UP; break;
+		case 5:  key = Input::Keys::JOY_DPAD_RIGHT; break;
+		case 6:  key = Input::Keys::JOY_DPAD_DOWN; break;
+		case 7:  key = Input::Keys::JOY_DPAD_LEFT; break;
+#if defined(USE_JOYSTICK_AXIS) && defined(SUPPORT_JOYSTICK_AXIS)
+		case 8:  analog_input.trigger_left = pressed ? Input::AnalogInput::kMaxValue : 0.0f; return;  // L2
+		case 9:  analog_input.trigger_right = pressed ? Input::AnalogInput::kMaxValue : 0.0f; return; // R2
+#else
+		case 8:  key = Input::Keys::JOY_OTHER_8; break;
+		case 9:  key = Input::Keys::JOY_OTHER_9; break;
+#endif
+		case 10: key = Input::Keys::JOY_SHOULDER_LEFT; break;  // L1
+		case 11: key = Input::Keys::JOY_SHOULDER_RIGHT; break; // R1
+		case 12: key = Input::Keys::JOY_Y; break;              // Triangle
+		case 13: key = Input::Keys::JOY_B; break;              // Circle
+		case 14: key = Input::Keys::JOY_A; break;              // Cross
+		case 15: key = Input::Keys::JOY_X; break;              // Square
+		default: break;
+	}
+	if (key != Input::Keys::NONE) {
+		keys[key] = pressed;
+	}
+#else
+	(void) evnt;
+#endif
+}
+
+void Sdl2Ui::ProcessPs2JoystickAxisEvent(SDL_Event& evnt) {
+#if defined(USE_JOYSTICK_AXIS) && defined(SUPPORT_JOYSTICK_AXIS)
+	auto normalize = [](int value) {
+		return static_cast<float>(value) / 32768.f;
+	};
+	const float value = normalize(evnt.jaxis.value);
+	switch (evnt.jaxis.axis) {
+		case 0: analog_input.primary.x = value; break;   // left X
+		case 1: analog_input.primary.y = value; break;   // left Y
+		case 2: analog_input.secondary.x = value; break; // right X
+		case 3: analog_input.secondary.y = value; break; // right Y
+		default: break;
+	}
+#else
+	(void) evnt;
+#endif
+}
+#endif
 
 void Sdl2Ui::ProcessFingerEvent(SDL_Event& evnt) {
 #if defined(USE_TOUCH) && defined(SUPPORT_TOUCH)
@@ -1281,6 +1398,8 @@ void Sdl2Ui::vGetConfig(Game_ConfigVideo& cfg) const {
 	cfg.renderer.Lock("SDL2 (Software, Wii U)");
 #elif defined(__PS4__)
 	cfg.renderer.Lock("SDL2 (Software, PS4)");
+#elif defined(__PS2__)
+	cfg.renderer.Lock("SDL2 (PS2 gsKit 320x240p)");
 #else
 	cfg.renderer.Lock("SDL2 (Software)");
 #endif
@@ -1323,6 +1442,17 @@ void Sdl2Ui::vGetConfig(Game_ConfigVideo& cfg) const {
 	cfg.fullscreen.SetOptionVisible(false);
 	// WiiU always pauses apps in the background
 	cfg.pause_when_focus_lost.SetOptionVisible(false);
+#elif defined(__PS2__)
+	// Fixed hardware presentation: these are invariants, not user settings.
+	cfg.vsync.SetOptionVisible(false);
+	cfg.fullscreen.SetOptionVisible(false);
+	cfg.fps_limit.SetOptionVisible(false);
+	cfg.pause_when_focus_lost.SetOptionVisible(false);
+	cfg.window_zoom.SetOptionVisible(false);
+	cfg.game_resolution.SetOptionVisible(false);
+	cfg.scaling_mode.SetOptionVisible(false);
+	cfg.stretch.SetOptionVisible(false);
+	cfg.screen_scale.SetOptionVisible(false);
 #elif defined(__PS4__)
 	cfg.fullscreen.SetOptionVisible(false);
 	cfg.pause_when_focus_lost.SetOptionVisible(false);

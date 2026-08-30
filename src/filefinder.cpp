@@ -500,6 +500,28 @@ Filesystem_Stream::InputStream FileFinder::OpenImage(std::string_view dir, std::
 }
 
 Filesystem_Stream::InputStream FileFinder::OpenMusic(std::string_view name) {
+#ifdef __PS2__
+	// PS2 MIDI fallback: Track.mid/Track.midi -> Track.wav.
+	std::string requested = ToString(name);
+	std::string lower = Utils::LowerCase(requested);
+	std::size_t ext_len = 0;
+	if (EndsWith(lower, ".midi")) {
+		ext_len = 5;
+	} else if (EndsWith(lower, ".mid")) {
+		ext_len = 4;
+	}
+	if (ext_len != 0) {
+		std::string wav_name = requested.substr(0, requested.size() - ext_len) + ".wav";
+		DirectoryTree::Args wav_args = { MakePath("Music", wav_name), MUSIC_TYPES, 1, false };
+		auto wav = open_generic("Music", wav_name, wav_args);
+		if (wav) {
+			Output::Debug("PS2 MIDI fallback: {} -> {}", requested, wav_name);
+			return wav;
+		}
+		Output::Warning("PS2 MIDI fallback missing: {} (expected {})", requested, wav_name);
+		return Filesystem_Stream::InputStream{};
+	}
+#endif
 	DirectoryTree::Args args = { MakePath("Music", name), MUSIC_TYPES, 1, false };
 	return open_generic("Music", name, args);
 }

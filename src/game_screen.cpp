@@ -17,6 +17,8 @@
 
 // Headers
 #include <cmath>
+#include <cstddef>
+#include <type_traits>
 #include "bitmap.h"
 #include <lcf/data.h>
 #include "player.h"
@@ -43,11 +45,28 @@ Game_Screen::Game_Screen()
 Game_Screen::~Game_Screen() {
 }
 
+#if defined(__PS2__)
+void Game_Screen::SetSaveData(const lcf::rpg::SaveScreen& screen)
+#else
 void Game_Screen::SetSaveData(lcf::rpg::SaveScreen screen)
+#endif
 {
 	CancelBattleAnimation();
 
+#if defined(__PS2__)
+	// EasyRPG-PS2 R5900 byte-copy workaround:
+	// SaveScreen is scalar-only/trivially copyable. GCC 15's R5900 backend
+	// ICEs when lowering its implicit aggregate assignment, even at -O0.
+	static_assert(std::is_trivially_copyable<lcf::rpg::SaveScreen>::value,
+		"PS2 SaveScreen workaround requires a trivially copyable type");
+	auto* dst = reinterpret_cast<unsigned char*>(&data);
+	const auto* src = reinterpret_cast<const unsigned char*>(&screen);
+	for (std::size_t i = 0; i < sizeof(data); ++i) {
+		dst[i] = src[i];
+	}
+#else
 	data = std::move(screen);
+#endif
 }
 
 void Game_Screen::InitGraphics() {

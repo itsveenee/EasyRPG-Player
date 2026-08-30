@@ -85,8 +85,8 @@ Platform::FileType Platform::File::GetType(bool follow_symlinks) const {
 	return FileType::Unknown;
 #else
 	struct stat sb = {};
-#  if defined(PLAYER_NINTENDO)
-	// no symlink support (FAT)
+#  if defined(PLAYER_NINTENDO) || defined(__PS2__)
+	// no symlink support on the console filesystems used here
 	(void)follow_symlinks;
 	auto fn = ::stat;
 #  else

@@ -98,8 +98,10 @@ bool Window_GameList::Refresh(FilesystemView filesystem_base, bool show_dotdot) 
 	// Sort game list in place
 	std::sort(game_entries.begin(), game_entries.end(),
 			  [](const FileFinder::GameEntry &ge1, const FileFinder::GameEntry &ge2) {
+				  // std::sort requires a strict weak ordering. <= is undefined
+				  // for equal/case-insensitive-equal names.
 				  return strcmp(Utils::LowerCase(ge1.dir_name).c_str(),
-								Utils::LowerCase(ge2.dir_name).c_str()) <= 0;
+								Utils::LowerCase(ge2.dir_name).c_str()) < 0;
 			  });
 
 	if (show_dotdot) {

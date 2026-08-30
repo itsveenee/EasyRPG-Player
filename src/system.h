@@ -83,6 +83,10 @@
 #  define SUPPORT_MOUSE
 #  define SUPPORT_JOYSTICK
 #  define SUPPORT_JOYSTICK_AXIS
+#elif defined(__PS2__)
+#  define SUPPORT_JOYSTICK
+#  define SUPPORT_JOYSTICK_AXIS
+#  define USE_CUSTOM_FILEBUF 4 * 1024
 #elif defined(__PS4__)
 #  define SUPPORT_ZOOM
 #  define SUPPORT_JOYSTICK
@@ -99,7 +103,7 @@
 #  define SYSTEM_DESKTOP_LINUX_BSD_MACOS
 #endif
 
-#ifdef USE_SDL
+#if defined(USE_SDL) && !defined(__PS2__)
 #  define SUPPORT_KEYBOARD
 #endif
 

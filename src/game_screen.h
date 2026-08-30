@@ -42,7 +42,13 @@ public:
 
 	void InitGraphics();
 
+#if defined(__PS2__)
+	// EasyRPG-PS2 R5900 SaveScreen ABI workaround:
+	// avoid passing this aggregate by value to the GCC R5900 backend.
+	void SetSaveData(const lcf::rpg::SaveScreen& screen);
+#else
 	void SetSaveData(lcf::rpg::SaveScreen screen);
+#endif
 	const lcf::rpg::SaveScreen& GetSaveData() const;
 
 	void TintScreen(int r, int g, int b, int s, int tenths);

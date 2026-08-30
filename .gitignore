@@ -123,3 +123,6 @@ eboot.bin
 *.pem
 *.keystore
 *.jks
+.ps2deps/
+build-ps2/
+dist-ps2/

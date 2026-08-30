@@ -551,6 +551,17 @@ elseif(AMIGA)
 	set(PLAYER_TARGET_PLATFORM "SDL1" CACHE STRING "Platform to compile for.")
 elseif(PS4)
 	set(PLAYER_TARGET_PLATFORM "SDL2" CACHE STRING "Platform to compile for.")
+elseif(PS2)
+	# EasyRPG-PS2: use a project-private SDL2/ps2_drivers prefix.
+	set(PLAYER_TARGET_PLATFORM "SDL2" CACHE STRING "Platform to compile for." FORCE)
+	set(PLAYER_PS2_PREFIX "" CACHE PATH "Private EasyRPG-PS2 dependency prefix")
+	if(NOT PLAYER_PS2_PREFIX)
+		message(FATAL_ERROR "PS2 build requires -DPLAYER_PS2_PREFIX=<private prefix>")
+	endif()
+	list(PREPEND CMAKE_PREFIX_PATH "${PLAYER_PS2_PREFIX}")
+	list(PREPEND CMAKE_FIND_ROOT_PATH "${PLAYER_PS2_PREFIX}")
+	target_include_directories(${PROJECT_NAME} SYSTEM PUBLIC "${PLAYER_PS2_PREFIX}/include")
+	target_link_directories(${PROJECT_NAME} PUBLIC "${PLAYER_PS2_PREFIX}/lib")
 else()
 	set(PLAYER_TARGET_PLATFORM "SDL3" CACHE STRING "Platform to compile for. Options: SDL3 SDL2 SDL1 libretro")
 	set_property(CACHE PLAYER_TARGET_PLATFORM PROPERTY STRINGS SDL3 SDL2 SDL1 libretro)
@@ -618,6 +629,9 @@ elseif(PLAYER_TARGET_PLATFORM STREQUAL "SDL2")
 		target_sources(${PROJECT_NAME} PRIVATE
 			src/platform/wiiu/main.h
 			src/platform/wiiu/input_buttons.cpp)
+	elseif(PS2)
+		# EasyRPG-PS2 uses a native DualShock mapping instead of desktop defaults.
+		target_sources(${PROJECT_NAME} PRIVATE src/platform/ps2/input_buttons.cpp)
 	endif()
 
 	if(WIN32)
@@ -769,7 +783,7 @@ if(NOT PLAYER_AUDIO_BACKEND IN_LIST AUDIO_PROP)
 endif()
 
 # Shared by homebrew platforms
-if(NINTENDO_3DS OR NINTENDO_WII OR NINTENDO_WIIU OR NINTENDO_WIIU OR NINTENDO_SWITCH OR VITA OR PS4)
+if(NINTENDO_3DS OR NINTENDO_WII OR NINTENDO_WIIU OR NINTENDO_WIIU OR NINTENDO_SWITCH OR VITA OR PS4 OR PS2)
 	target_compile_options(${PROJECT_NAME} PUBLIC -fno-exceptions -fno-rtti)
 	if(VITA)
 		# This optimisation is unstable on Vita (crashes at the end of MainLoop)
@@ -1403,6 +1417,34 @@ elseif(PLAYER_CONSOLE_PORT AND NOT PLAYER_TARGET_PLATFORM STREQUAL "libretro")
 			FILE "${CMAKE_CURRENT_SOURCE_DIR}/resources/psvita/touch_ui.png" touch_ui.png)
 		install(FILES ${CMAKE_CURRENT_BINARY_DIR}/EasyRPG-Player.vpk
 			DESTINATION . COMPONENT psvita)
+	elseif(PS2)
+		# EasyRPG-PS2 standalone ELF.
+		# SDL2::SDL2main supplies the real PS2 main() and invokes our SDL_main().
+		set(CMAKE_EXECUTABLE_SUFFIX .elf)
+		add_executable(easyrpg-player src/platform/ps2/main.cpp)
+		target_include_directories(easyrpg-player PRIVATE "${PLAYER_PS2_PREFIX}/include")
+		target_link_directories(easyrpg-player PRIVATE "${PLAYER_PS2_PREFIX}/lib")
+		# Pixman and parts of the Player use libm. Keep the project target's
+		# existing plain target_link_libraries signature untouched, and place
+		# libm last on the standalone ELF link line for safe static link order.
+		target_link_libraries(easyrpg-player
+			${PROJECT_NAME}
+			"${PLAYER_PS2_PREFIX}/lib/libps2_drivers.a"
+			m)
+		target_compile_options(${PROJECT_NAME} PUBLIC
+			-ffunction-sections
+			-fdata-sections)
+		# GCC 15/R5900 backend workaround: game_screen.cpp can ICE in RTL
+		# reload at -O2 ("maximum number of generated reload insns...").
+		# Keep the workaround source-local; all other Player sources remain -O2.
+		set_source_files_properties(src/game_screen.cpp PROPERTIES
+			COMPILE_OPTIONS "-O0") # EasyRPG-PS2 GCC15 R5900 reload ICE workaround
+		set_source_files_properties(src/hslrgb.cpp PROPERTIES
+			COMPILE_OPTIONS "-O0") # EasyRPG-PS2 GCC15 R5900 HSL reload ICE workaround
+		target_link_options(easyrpg-player PRIVATE
+			-Wl,--gc-sections
+			"-Wl,-Map=${CMAKE_BINARY_DIR}/EasyRPG-PS2.map")
+		set_target_properties(easyrpg-player PROPERTIES OUTPUT_NAME "EasyRPG-PS2")
 	elseif(PS4)
 
 		add_executable(easyrpg-player "src/platform/ps4/main.cpp")
